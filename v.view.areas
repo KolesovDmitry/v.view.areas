@@ -1,0 +1,162 @@
+#!/usr/bin/env python
+# -*- coding: utf-8  -*-
+#
+############################################################################
+#
+# MODULE:      v.view.areas
+# AUTHOR(S):   Dmitry Kolesov (kolesov.dm@gmail.com);
+#
+# PURPOSE:     Create areas of view from 'directional antennas'
+#
+#
+# COPYRIGHT:   (C) 2014 Dmitry Kolesov / NextGIS company
+#
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+############################################################################
+
+#%Module
+#% description: Create areas of view from 'directional antennas'
+#%End
+#%option
+#% key: input
+#% type: string
+#% description: name of the input vector map (points will be used only)
+#% required : yes
+#% multiple: no
+#%end
+#%option
+#% key: output
+#% type: string
+#% description: output vector map name
+#% required : yes
+#% multiple: no
+#%end
+#%option
+#% key: cat
+#% type: string
+#% description: column of category of the center points
+#% required : no
+#% multiple: no
+#%end
+#%option
+#% key: layer
+#% type: integer
+#% description: layer of the map
+#% required : no
+#% multiple: no
+#%end
+#%option
+#% key: radius
+#% type: string
+#% description: column of the radius of the center points
+#% required : no
+#% multiple: no
+#%end
+#%option
+#% key: x
+#% type: string
+#% description: column of x coordinate of the center points
+#% required : yes
+#% multiple: no
+#%end
+#%option
+#% key: y
+#% type: string
+#% description: column of y coordinate of the center points
+#% required : yes
+#% multiple: no
+#%end
+#%option
+#% key: min_angle
+#% type: string
+#% description: colunm of azimuth of the first sector boundary (min angle of the sector)
+#% required : yes
+#% multiple: no
+#%end
+#%option
+#% key: max_angle
+#% type: string
+#% description: colunm of azimuth of the second sector boundary (max angle of the sector)
+#% required : yes
+#% multiple: no
+#%end
+
+
+import os, sys
+
+if "GISBASE" not in os.environ:
+    print "You must be in GRASS GIS to run this program."
+    sys.exit(1)
+
+import grass.script as grass
+
+
+def main(options, flags):
+    in_map  = options['input']
+    output = options['output']
+    catField = options['cat']
+    if not catField:
+        catField = 'cat'
+    xField = options['x']
+    yField = options['y']
+    rField = options['radius']
+    minAField = options['min_angle']
+    maxAField = options['max_angle']
+    layer = options['layer']
+    if not layer:
+        layer = 1
+
+    tmp_prefix = 'prefix_%d' % os.getpid()
+    try:
+        # Create sectors
+        grass.run_command(
+            './v.sector',
+            input=in_map, output=tmp_prefix, cat=catField, layer=layer,
+            radius=rField, x=xField, y=yField, min_angle=minAField, max_angle=maxAField
+        )
+        names = []
+        p = grass.pipe_command('g.mlist', type='vect', pattern=tmp_prefix+'*')
+        for map in p.stdout:
+            names.append(map.strip())
+
+        # Cut areas
+        try:
+            tmp_map = 'tmp_area_%d' % os.getpid()
+            for map in names:
+                grass.run_command('./v.clip.by.maps', input=map, prefix=tmp_prefix, output=tmp_map)
+                grass.run_command('g.copy', vect='%s,%s' % (tmp_map, map), overwrite=True, quiet=True)
+        finally:
+            grass.run_command('g.remove', vect=tmp_map, quiet=True)
+
+        # Patch all maps into one map
+        grass.run_command('g.copy', vect='%s,%s' % (names[0], output), overwrite=True, quiet=True)
+        for map in names[1:]:
+            grass.run_command(
+                'v.patch',
+                input=map, output=output,
+                flags='ea',
+                overwrite=True, quiet=True
+            )
+    finally:
+        # Delete temp maps
+        for map in names:
+            pass
+            #grass.run_command('g.remove', vect=map, quiet=True)
+
+
+
+
+if __name__ == "__main__":
+    options, flags = grass.parser()
+    main(options, flags)
+    sys.exit(0)
+
